@@ -1,8 +1,10 @@
 package org.http4k.multipart
 
 import org.apache.commons.fileupload.util.ParameterParser
+import org.http4k.multipart.StreamingMultipartFormParts.MultipartFormStreamState.Header
 import java.io.IOException
 import java.io.InputStream
+import java.lang.String.CASE_INSENSITIVE_ORDER
 import java.nio.charset.Charset
 import java.util.NoSuchElementException
 import java.util.TreeMap
@@ -54,12 +56,12 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
             }
         } else {
             state = if (!inputStream.matchInStream(FIELD_SEPARATOR)) throw TokenNotFoundException("Boundary must be followed by field separator, but didn't find it")
-            else MultipartFormStreamState.Header
+            else Header
         }
     }
 
     private fun parseNextPart(): StreamingPart? = findBoundary().run {
-        if (state == MultipartFormStreamState.Header) parsePart() else null
+        if (state == Header) parsePart() else null
     }
 
     private fun parsePart(): StreamingPart? {
@@ -70,11 +72,11 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
             val contentDisposition = ParameterParser().parse(headers["Content-Disposition"], ';')
             val contentTypeParams = ParameterParser().parse(contentType, ';')
 
-            mixedName = trim(contentDisposition["name"])
+            mixedName = contentDisposition["name"].trim()
 
             oldBoundary = boundary
             oldBoundaryWithPrefix = boundaryWithPrefix
-            boundary = (String(STREAM_TERMINATOR, encoding) + trim(contentTypeParams["boundary"])!!).toByteArray(encoding)
+            boundary = (String(STREAM_TERMINATOR, encoding) + contentTypeParams["boundary"].trim()!!).toByteArray(encoding)
             boundaryWithPrefix = addPrefixToBoundary(boundary)
 
             state = MultipartFormStreamState.FindBoundary
@@ -82,7 +84,7 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
             parseNextPart()
         } else {
             val contentDisposition = ParameterParser().parse(headers["Content-Disposition"], ';')
-            val fieldName = (if (contentDisposition.containsKey("attachment")) mixedName else trim(contentDisposition["name"]))
+            val fieldName = (if (contentDisposition.containsKey("attachment")) mixedName else contentDisposition["name"].trim())
                 ?: throw ParseError("no name for part")
 
             StreamingPart(
@@ -95,15 +97,15 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
         }
     }
 
-    private fun filenameFromMap(contentDisposition: Map<String, String>): String? = if (contentDisposition.containsKey("filename")) trim(contentDisposition["filename"]
-        ?: "") else null
+    private fun filenameFromMap(contentDisposition: Map<String, String>): String? = if (contentDisposition.containsKey("filename")) (contentDisposition["filename"]
+        ?: "").trim() else null
 
-    private fun trim(string: String?): String? = string?.trim { it <= ' ' }
+    private fun String?.trim(): String? = this?.trim { it <= ' ' }
 
     private fun parseHeaderLines(): Map<String, String> {
-        if (MultipartFormStreamState.Header != state) throw IllegalStateException("Expected state ${MultipartFormStreamState.Header} but got $state")
+        if (Header != state) throw IllegalStateException("Expected state $Header but got $state")
 
-        val result = TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER)
+        val result = TreeMap<String, String>(CASE_INSENSITIVE_ORDER)
         var previousHeaderName: String? = null
         val maxByteIndexForHeader = inputStream.currentByteIndex() + HEADER_SIZE_MAX
         while (inputStream.currentByteIndex() < maxByteIndexForHeader) {

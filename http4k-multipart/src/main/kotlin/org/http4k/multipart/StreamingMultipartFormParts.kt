@@ -1,7 +1,7 @@
 package org.http4k.multipart
 
 import org.apache.commons.fileupload.util.ParameterParser
-import org.http4k.multipart.StreamingMultipartFormParts.MultipartFormStreamState.Header
+import org.http4k.multipart.StreamingMultipartFormParts.MultipartStreamState.Header
 import java.io.IOException
 import java.io.InputStream
 import java.lang.String.CASE_INSENSITIVE_ORDER
@@ -17,7 +17,7 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
 
     private var boundary = prependBoundaryWithStreamTerminator(inBoundary)
     private var boundaryWithPrefix = addPrefixToBoundary(boundary)
-    private var state: MultipartFormStreamState = MultipartFormStreamState.FindBoundary
+    private var state: MultipartStreamState = MultipartStreamState.FindBoundary
     // yes yes, I should use a stack or something for this
     private var mixedName: String? = null
     private var oldBoundary = inBoundary
@@ -33,14 +33,14 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
         }
 
     private fun findBoundary() {
-        if (state == MultipartFormStreamState.FindPrefix) {
+        if (state == MultipartStreamState.FindPrefix) {
             if (!inputStream.matchInStream(FIELD_SEPARATOR)) throw TokenNotFoundException("Boundary must be proceeded by field separator, but didn't find it")
-            state = MultipartFormStreamState.FindBoundary
+            state = MultipartStreamState.FindBoundary
         }
 
-        if (state == MultipartFormStreamState.FindBoundary && !inputStream.matchInStream(boundary)) throw TokenNotFoundException("Boundary not found <<" + String(boundary, encoding) + ">>")
+        if (state == MultipartStreamState.FindBoundary && !inputStream.matchInStream(boundary)) throw TokenNotFoundException("Boundary not found <<" + String(boundary, encoding) + ">>")
 
-        state = MultipartFormStreamState.BoundaryFound
+        state = MultipartStreamState.BoundaryFound
         if (inputStream.matchInStream(STREAM_TERMINATOR)) {
             if (!inputStream.matchInStream(FIELD_SEPARATOR)) throw TokenNotFoundException("Stream terminator must be followed by field separator, but didn't find it")
             when {
@@ -49,10 +49,10 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
                     boundaryWithPrefix = oldBoundaryWithPrefix
                     mixedName = null
 
-                    state = MultipartFormStreamState.FindBoundary
+                    state = MultipartStreamState.FindBoundary
                     findBoundary()
                 }
-                else -> state = MultipartFormStreamState.Eos
+                else -> state = MultipartStreamState.Eos
             }
         } else {
             state = if (!inputStream.matchInStream(FIELD_SEPARATOR)) throw TokenNotFoundException("Boundary must be followed by field separator, but didn't find it")
@@ -79,7 +79,7 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
             boundary = (String(STREAM_TERMINATOR, encoding) + contentTypeParams["boundary"].trim()!!).toByteArray(encoding)
             boundaryWithPrefix = addPrefixToBoundary(boundary)
 
-            state = MultipartFormStreamState.FindBoundary
+            state = MultipartStreamState.FindBoundary
 
             parseNextPart()
         } else {
@@ -89,7 +89,10 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
 
             StreamingPart(
                 fieldName,
-                !contentDisposition.containsKey("filename"),
+                when {
+                    contentDisposition.containsKey("filename") -> PartType.File
+                    else -> PartType.Field
+                },
                 contentType,
                 filenameFromMap(contentDisposition),
                 BoundedInputStream(),
@@ -112,7 +115,7 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
             val header = readStringFromStreamUntilMatched(inputStream, FIELD_SEPARATOR, (maxByteIndexForHeader - inputStream.currentByteIndex()).toInt(), encoding)
             when {
                 header == "" -> {
-                    state = MultipartFormStreamState.Contents
+                    state = MultipartStreamState.Contents
                     return result
                 }
                 header.matches("\\s+.*".toRegex()) -> result[previousHeaderName!!] = result[previousHeaderName] + "; " + header.trim { it <= ' ' }
@@ -137,7 +140,7 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
             if (!nextIsKnown) {
                 nextIsKnown = true
 
-                if (state == MultipartFormStreamState.Contents) {
+                if (state == MultipartStreamState.Contents) {
                     currentPart!!.inputStream.close()
                 }
 
@@ -160,7 +163,7 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
                 nextIsKnown = false
             } else {
 
-                if (state == MultipartFormStreamState.Contents) currentPart!!.inputStream.close()
+                if (state == MultipartStreamState.Contents) currentPart!!.inputStream.close()
 
                 currentPart = safelyParseNextPart()
                 if (isEndOfStream) throw NoSuchElementException("No more parts in this MultipartForm")
@@ -193,12 +196,12 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
             val result = inputStream.readByteFromStreamUnlessTokenMatched(boundaryWithPrefix)
             return when (result) {
                 -1 -> {
-                    state = MultipartFormStreamState.FindPrefix
+                    state = MultipartStreamState.FindPrefix
                     endOfStream = true
                     -1
                 }
                 -2 -> {
-                    state = MultipartFormStreamState.BoundaryFound
+                    state = MultipartStreamState.BoundaryFound
                     endOfStream = true
                     -1 // inputStream.read(byte b[], int off, int len) checks for exactly -1
                 }
@@ -222,8 +225,8 @@ internal class StreamingMultipartFormParts private constructor(inBoundary: ByteA
         }
     }
 
-    private enum class MultipartFormStreamState {
-        FindPrefix, FindBoundary, BoundaryFound, Eos, Header, Contents, Error
+    private enum class MultipartStreamState {
+        FindPrefix, FindBoundary, BoundaryFound, Eos, Header, Contents
     }
 
     companion object {
